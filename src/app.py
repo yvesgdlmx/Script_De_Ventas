@@ -25,6 +25,7 @@ try:
         reader = csv.reader(original_file, delimiter='\t')
         # Omitir la primera fila (encabezados)
         next(reader, None)
+
         # Leer cada línea del archivo
         for row in reader:
             # Verificar si la fila contiene datos válidos (no está vacía)
@@ -32,17 +33,20 @@ try:
                 try:
                     # Omitir el segundo registro (55555)
                     row.pop(1)
+
                     # Verificar si la fecha es válida
                     ship_date_str = row[14]  # Asegurándonos de que estamos accediendo a la columna correcta
                     if re.match(r'\d{2}/\d{2}/\d{2}', ship_date_str):
-                        ship_date = datetime.strptime(ship_date_str, '%d/%m/%y').strftime('%Y-%m-%d')
+                        ship_date = datetime.strptime(ship_date_str, '%m/%d/%y').strftime('%Y-%m-%d')
                         row[14] = ship_date
                     else:
                         raise ValueError(f"Formato de fecha inválido: {ship_date_str}")
+
                     # Verificar si ya existe un registro con el mismo mes y año
                     ship_date_month_year = datetime.strptime(ship_date, '%Y-%m-%d').strftime('%Y-%m')
                     cursor.execute("SELECT COUNT(*) FROM Orders WHERE DATE_FORMAT(ShipDate, '%Y-%m') = %s", (ship_date_month_year,))
                     count = cursor.fetchone()[0]
+
                     if count == 0:
                         patient = row[0]
                         if patient in patient_counts:
@@ -53,13 +57,17 @@ try:
                 except ValueError as e:
                     print(f"Formato de fecha inválido en la fila: {row}. Error: {e}")
 
-    # Filtrar los registros que tienen duplicados en el campo Patient
-    filtered_data = [row for row in data if patient_counts[row[0]] == 1]
+    # Modificar los registros duplicados para poner LensPrice, CoatingsPrice y TintPrice a 0
+    for row in data:
+        if patient_counts[row[0]] > 1:
+            row[6] = '0'  # LensPrice
+            row[9] = '0'  # CoatingsPrice
+            row[12] = '0'  # TintPrice
 
     # Escribir los datos procesados en el archivo de salida temporal
     with open(output_file, 'w', newline='') as new_file:
         writer = csv.writer(new_file, delimiter='\t')
-        for row in filtered_data:
+        for row in data:
             writer.writerow(row)
 
     # Cargar los datos en MySQL
@@ -72,6 +80,7 @@ try:
             allow_local_infile=True
         )
         cursor = connection.cursor()
+
         # Usar LOAD DATA LOCAL INFILE para cargar los datos en la tabla Orders
         sql_command = f"""
         LOAD DATA LOCAL INFILE '{output_file}'
