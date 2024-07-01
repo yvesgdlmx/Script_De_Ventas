@@ -44,9 +44,8 @@ try:
 
                     # Verificar si ya existe un registro con el mismo mes y año
                     ship_date_month_year = datetime.strptime(ship_date, '%Y-%m-%d').strftime('%Y-%m')
-                    cursor.execute("SELECT COUNT(*) FROM Orders WHERE DATE_FORMAT(ShipDate, '%Y-%m') = %s", (ship_date_month_year,))
+                    cursor.execute("SELECT COUNT(*) FROM Orders WHERE DATE_FORMAT(ShipDate, '%Y-%m') = %s AND Patient = %s", (ship_date_month_year, row[0]))
                     count = cursor.fetchone()[0]
-
                     if count == 0:
                         patient = row[0]
                         if patient in patient_counts:
