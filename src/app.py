@@ -20,32 +20,34 @@ try:
         database='facturas_optimex'
     )
     cursor = connection.cursor()
-
     with open(input_file, 'r') as original_file:
         reader = csv.reader(original_file, delimiter='\t')
-        # Omitir la primera fila (encabezados)
-        next(reader, None)
-
+        next(reader, None)  # Omitir la primera fila (encabezados)
         # Leer cada línea del archivo
         for row in reader:
-            # Verificar si la fila contiene datos válidos (no está vacía)
             if row and row[0].strip():
                 try:
-                    # Omitir el segundo registro (55555)
-                    row.pop(1)
-
-                    # Verificar si la fecha es válida
-                    ship_date_str = row[14]  # Asegurándonos de que estamos accediendo a la columna correcta
-                    if re.match(r'\d{2}/\d{2}/\d{2}', ship_date_str):
-                        ship_date = datetime.strptime(ship_date_str, '%m/%d/%y').strftime('%Y-%m-%d')
-                        row[14] = ship_date
+                    row.pop(1)  # Omitir el segundo registro (55555)
+                    ship_date_str = row[14]
+                    
+                    # Verificar y convertir la fecha
+                    if re.match(r'\d{2}/\d{2}/\d{2}$', ship_date_str):
+                        # Formato corto MM/DD/YY
+                        ship_date = datetime.strptime(ship_date_str, '%m/%d/%y')
+                        ship_date = ship_date.replace(year=datetime.now().year)
+                    elif re.match(r'\d{2}/\d{2}/\d{4}$', ship_date_str):
+                        # Formato largo MM/DD/YYYY
+                        ship_date = datetime.strptime(ship_date_str, '%m/%d/%Y')
                     else:
                         raise ValueError(f"Formato de fecha inválido: {ship_date_str}")
+                    
+                    ship_date_str = ship_date.strftime('%Y-%m-%d')
+                    row[14] = ship_date_str
+                    ship_date_month_year = ship_date.strftime('%Y-%m')
 
-                    # Verificar si ya existe un registro con el mismo mes y año
-                    ship_date_month_year = datetime.strptime(ship_date, '%Y-%m-%d').strftime('%Y-%m')
                     cursor.execute("SELECT COUNT(*) FROM Orders WHERE DATE_FORMAT(ShipDate, '%Y-%m') = %s AND Patient = %s", (ship_date_month_year, row[0]))
                     count = cursor.fetchone()[0]
+
                     if count == 0:
                         patient = row[0]
                         if patient in patient_counts:
@@ -56,7 +58,6 @@ try:
                 except ValueError as e:
                     print(f"Formato de fecha inválido en la fila: {row}. Error: {e}")
 
-    # Modificar los registros duplicados para poner LensPrice, CoatingsPrice y TintPrice a 0
     for row in data:
         if patient_counts[row[0]] > 1:
             row[6] = '0'  # LensPrice
@@ -69,39 +70,33 @@ try:
         for row in data:
             writer.writerow(row)
 
-    # Cargar los datos en MySQL
+    # Insertar los datos en MySQL
     try:
         connection = mysql.connector.connect(
             host='localhost',
             user='root',
             password='luis',
-            database='facturas_optimex',
-            allow_local_infile=True
+            database='facturas_optimex'
         )
         cursor = connection.cursor()
-
-        # Usar LOAD DATA LOCAL INFILE para cargar los datos en la tabla Orders
-        sql_command = f"""
-        LOAD DATA LOCAL INFILE '{output_file}'
-        INTO TABLE Orders
-        FIELDS TERMINATED BY '\\t'
-        LINES TERMINATED BY '\\n'
-        (Patient, LensStyle, LensMaterial, LensColor, LensOrdered, LensSupplied, LensPrice, ARCoating, Mirror, CoatingsPrice, Tint, TintOrdered, TintPrice, JobType, ShipDate, TAT, Redo, Poder)
-        SET ShipDate = STR_TO_DATE(ShipDate, '%Y-%m-%d')
-        """
-        cursor.execute(sql_command)
+        for row in data:
+            insert_command = """
+            INSERT INTO Orders (Patient, LensStyle, LensMaterial, LensColor, LensOrdered, LensSupplied, LensPrice, ARCoating, Mirror, CoatingsPrice, Tint, TintOrdered, TintPrice, JobType, ShipDate, TAT, Redo, Poder)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(insert_command, row)
         connection.commit()
-
         # Actualizar los precios a 0 donde TAT es mayor que 5.0 y Poder no cumple las condiciones
         update_command = """
         UPDATE Orders
         SET LensPrice = 0, CoatingsPrice = 0, TintPrice = 0
-        WHERE TAT > 5.0 AND (Poder < 12 AND Poder > -12)
+        WHERE TAT > 4.0 AND (Poder < 12 AND Poder > -12)
         """
         cursor.execute(update_command)
         connection.commit()
     except mysql.connector.Error as err:
         print("Error al ejecutar el comando SQL:", err)
+        connection.rollback()  # Revertir la transacción en caso de error
     finally:
         if 'cursor' in locals() and cursor:
             cursor.close()
